@@ -1,0 +1,326 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard | NSU Transcript Analyzer{% endblock %}
+
+{% block content %}
+<section class="panel">
+    <div class="panel-head">
+        <div>
+            <h1>Welcome, {{ current_user.name }}</h1>
+            <p>Run transcript analysis with multiple input modes.</p>
+        </div>
+        {% if current_user.avatar_url %}
+            <img class="avatar" src="{{ current_user.avatar_url }}" alt="avatar">
+        {% endif %}
+    </div>
+
+    <form method="post" enctype="multipart/form-data" class="analyzer-form">
+        <div class="grid-2">
+            <label>
+                <span>Program</span>
+                <select name="program" required>
+                    {% for key, program in programs.items() %}
+                        <option value="{{ key }}">{{ key }} - {{ program.degree }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                <span>Waived Courses (comma-separated)</span>
+                <input type="text" name="waived" placeholder="ENG102, MAT116">
+            </label>
+        </div>
+
+        <div class="input-modes">
+            <label><input type="radio" name="input_method" value="manual" {% if selected_input == 'manual' %}checked{% endif %}> Manual</label>
+            <label><input type="radio" name="input_method" value="csv" {% if selected_input == 'csv' %}checked{% endif %}> CSV</label>
+            <label><input type="radio" name="input_method" value="pdf" {% if selected_input == 'pdf' %}checked{% endif %}> PDF</label>
+            <label><input type="radio" name="input_method" value="image" {% if selected_input == 'image' %}checked{% endif %}> Image</label>
+        </div>
+
+        <div class="mode-panels">
+            <div class="mode-card manual-card" data-mode="manual">
+                <div class="manual-head">
+                    <h3>Manual Input</h3>
+                    <span class="badge-soft">Fast Entry</span>
+                </div>
+                <p class="manual-sub">Add courses one by one with a cleaner form, then run analysis.</p>
+
+                <div class="builder-grid">
+                    <label>
+                        <span>Course Code</span>
+                        <input type="text" id="courseCode" placeholder="e.g. CSE115" autocomplete="off">
+                    </label>
+
+                    <label>
+                        <span>Credits</span>
+                        <div class="stepper">
+                            <button type="button" class="step-btn" id="creditMinus">-</button>
+                            <input type="number" id="courseCredits" min="0" max="6" value="3">
+                            <button type="button" class="step-btn" id="creditPlus">+</button>
+                        </div>
+                    </label>
+
+                    <label>
+                        <span>Grade</span>
+                        <select id="courseGrade">
+                            <option>A</option>
+                            <option>A-</option>
+                            <option>B+</option>
+                            <option>B</option>
+                            <option>B-</option>
+                            <option>C+</option>
+                            <option>C</option>
+                            <option>C-</option>
+                            <option>D+</option>
+                            <option>D</option>
+                            <option>F</option>
+                            <option>W</option>
+                        </select>
+                    </label>
+
+                    <label>
+                        <span>Season</span>
+                        <select id="courseSeason">
+                            <option>Spring</option>
+                            <option>Summer</option>
+                            <option>Fall</option>
+                        </select>
+                    </label>
+
+                    <label>
+                        <span>Year</span>
+                        <input type="number" id="courseYear" min="2000" max="2100" value="2024">
+                    </label>
+                </div>
+
+                <p class="form-error" id="courseFormError" aria-live="polite"></p>
+
+                <div class="builder-actions">
+                    <button class="btn add-course-btn" type="button" id="addCourseBtn">Add Course</button>
+                    <button class="btn ghost" type="button" id="cancelEditBtn" style="display:none;">Cancel Edit</button>
+                    <button class="btn tiny" type="button" id="clearCoursesBtn">Clear All</button>
+                </div>
+
+                <div class="course-list" id="courseList">
+                    <p class="empty-course" id="emptyCourse">No courses added yet. Use the form above to add your first course.</p>
+                </div>
+
+                <div class="manual-format">Course_Code, Credits, Grade, Semester</div>
+                <textarea
+                    class="manual-textarea"
+                    id="manualText"
+                    name="manual_text"
+                    rows="5"
+                    placeholder="CSE115, 4, A-, Spring 2024"
+                ></textarea>
+                <p class="manual-tip">Tip: you can still paste multiple lines directly in this box if needed.</p>
+            </div>
+
+            <div class="mode-card" data-mode="csv">
+                <h3>CSV Upload</h3>
+                <input type="file" name="csv_file" accept=".csv">
+            </div>
+
+            <div class="mode-card" data-mode="pdf">
+                <h3>PDF Upload</h3>
+                <input type="file" name="pdf_file" accept=".pdf">
+                <p class="upload-tip">Best result: upload transcript pages only (300 DPI if scanned), avoid notice/disclaimer pages.</p>
+            </div>
+
+            <div class="mode-card" data-mode="image">
+                <h3>Image Upload</h3>
+                <input type="file" name="image_file" accept=".png,.jpg,.jpeg,.webp,.bmp">
+                <p class="upload-tip">Use straight, high-contrast image with full course table visible. Avoid shadows and blur.</p>
+            </div>
+        </div>
+
+        <button class="btn primary" type="submit">Run Analysis</button>
+    </form>
+</section>
+
+<section class="panel reveal api-panel">
+    <div class="api-head">
+        <div>
+            <h2>API Integration Demo</h2>
+            <p>Use these authenticated endpoints in Postman or from your frontend/mobile client.</p>
+        </div>
+        <span class="badge-soft">Assignment Ready</span>
+    </div>
+    <div class="api-grid">
+        <article class="api-card">
+            <h4>Health Check</h4>
+            <p><code>GET /api/health</code></p>
+            <button class="btn tiny api-copy" type="button" data-copy="curl http://127.0.0.1:5000/api/health">Copy Curl</button>
+        </article>
+        <article class="api-card">
+            <h4>Analyze (JSON)</h4>
+            <p><code>POST /api/analyze</code></p>
+            <button
+                class="btn tiny api-copy"
+                type="button"
+                data-copy='curl -X POST http://127.0.0.1:5000/api/analyze -H "Content-Type: application/json" -d "{\"input_method\":\"manual\",\"program\":\"CSE\",\"manual_text\":\"CSE115, 4, A-, Spring 2024\"}"'
+            >Copy Curl</button>
+        </article>
+        <article class="api-card">
+            <h4>List History</h4>
+            <p><code>GET /api/history</code></p>
+            <button class="btn tiny api-copy" type="button" data-copy="curl http://127.0.0.1:5000/api/history">Copy Curl</button>
+        </article>
+    </div>
+    <div class="api-actions">
+        <button class="btn primary" type="button" id="runApiDemoBtn">Sync Latest Run via API</button>
+        <p class="api-note">This fetches your latest saved analysis using <code>/api/history</code> and <code>/api/history/&lt;id&gt;</code>.</p>
+    </div>
+    <pre class="api-result" id="apiDemoResult">Loading latest API run...</pre>
+    <p class="api-note">Note: <code>/api/analyze</code> and history endpoints require you to be signed in with your NSU account.</p>
+</section>
+
+<section class="panel reveal">
+    <div class="api-head">
+        <div>
+            <h2>AI Chat (MCP via Backend)</h2>
+            <p>Chat uses <code>/api/ai/chat</code>. Tool calls and latency are shown below each answer.</p>
+        </div>
+        <span class="badge-soft">MCP Ready</span>
+    </div>
+    <div class="ai-chat-wrap">
+        <div class="ai-chat-log" id="aiChatLog">
+            <div class="ai-msg assistant">Hi! Ask a question. I may use MCP tools when needed.</div>
+        </div>
+        <div class="ai-chat-input-row">
+            <input type="text" id="aiChatInput" placeholder="Type a question (e.g., lookup CSE115)">
+            <button class="btn primary" type="button" id="aiChatSendBtn">Send</button>
+        </div>
+        <p class="api-note" id="aiChatStatus"></p>
+    </div>
+</section>
+
+<section class="panel reveal">
+    <h3>OCR Reliability Rule</h3>
+    <p>For PDF/Image inputs, analysis is blocked when OCR confidence is low or detected rows are too few. Use CSV/manual for guaranteed result.</p>
+</section>
+
+{% if ocr_preview %}
+<section class="panel reveal">
+    <div class="debug-head">
+        <div>
+            <h2>OCR Preview</h2>
+            <p>Extracted text snapshot from your {{ selected_input|upper }} file. Use this to confirm course rows are detected correctly.</p>
+        </div>
+        <span class="badge-soft">Debug Aid</span>
+    </div>
+    {% if ocr_warning %}
+    <div class="ocr-warning">{{ ocr_warning }}</div>
+    {% endif %}
+    {% if ocr_preview_payload %}
+    <script type="application/json" id="ocrPreviewPayload">{{ ocr_preview_payload|tojson }}</script>
+    {% endif %}
+    <div class="ocr-meta" id="ocrMeta"></div>
+    <div class="ocr-layout">
+        <article class="ocr-block">
+            <h4>Likely Course Rows</h4>
+            <div class="ocr-rows" id="ocrRows"></div>
+        </article>
+        <article class="ocr-block">
+            <h4>Raw Extracted Text</h4>
+            <pre class="ocr-preview" id="ocrPreviewRaw">{{ ocr_preview }}</pre>
+        </article>
+    </div>
+</section>
+{% endif %}
+
+{% if result %}
+<section class="panel reveal">
+    <h2>Analysis Result</h2>
+    <div class="metrics">
+        <article>
+            <h4>CGPA</h4>
+            <p>{{ result.cgpa }}</p>
+        </article>
+        <article>
+            <h4>Earned Credits</h4>
+            <p>{{ result.earned_credits }}</p>
+        </article>
+        <article>
+            <h4>Required Credits</h4>
+            <p>{{ result.required_credits }}</p>
+        </article>
+        <article>
+            <h4>Eligible</h4>
+            <p>{{ "Yes" if result.eligible else "No" }}</p>
+        </article>
+    </div>
+
+    <h3>Latest Courses</h3>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Course</th>
+                    <th>Credits</th>
+                    <th>Grade</th>
+                    <th>Semester</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in result.latest_rows %}
+                <tr>
+                    <td>{{ row.Course_Code }}</td>
+                    <td>{{ row.Credits }}</td>
+                    <td>{{ row.Grade }}</td>
+                    <td>{{ row.Semester }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <h3>Audit Status</h3>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th>Course</th>
+                    <th>Status</th>
+                    <th>Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in result.course_audit %}
+                <tr>
+                    <td>{{ row.category }}</td>
+                    <td>{{ row.course }}</td>
+                    <td><span class="status {{ row.status|lower }}">{{ row.status }}</span></td>
+                    <td>{{ row.details }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if result.retake_summary %}
+    <h3>Retake Summary</h3>
+    <div class="retake-grid">
+        {% for retake in result.retake_summary %}
+        <article>
+            <h4>{{ retake.course }}</h4>
+            <p>{{ retake.attempts|join(' -> ') }}</p>
+        </article>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if result.issues %}
+    <h3>Issues</h3>
+    <ul class="issues">
+        {% for issue in result.issues %}
+            <li>{{ issue }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</section>
+{% endif %}
+
+<script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}History | NSU Transcript Analyzer{% endblock %}
+
+{% block content %}
+<section class="panel">
+    <h1>Your Transcript History</h1>
+    <p>Every analysis run is stored by account.</p>
+
+    {% if runs %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Input</th>
+                    <th>Program</th>
+                    <th>CGPA</th>
+                    <th>Credits</th>
+                    <th>Eligible</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for run in runs %}
+                <tr>
+                    <td>{{ run.created_at|localtime('%Y-%m-%d %I:%M %p') }}</td>
+                    <td>{{ run.input_method|upper }}</td>
+                    <td>{{ run.program }}</td>
+                    <td>{{ '%.2f'|format(run.cgpa) }}</td>
+                    <td>{{ run.earned_credits }}/{{ run.required_credits }}</td>
+                    <td>{{ 'Yes' if run.eligible else 'No' }}</td>
+                    <td><a class="btn tiny" href="{{ url_for('history_details', run_id=run.id) }}">View</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+        <p class="empty">No runs yet. Go to dashboard and run your first transcript analysis.</p>
+    {% endif %}
+</section>
+{% endblock %}

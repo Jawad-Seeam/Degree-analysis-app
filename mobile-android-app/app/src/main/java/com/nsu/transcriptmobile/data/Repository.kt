@@ -1,0 +1,265 @@
+package com.nsu.transcriptmobile.data
+
+import android.content.Context
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import java.time.Instant
+
+class Repository(context: Context) {
+    private val prefs = context.getSharedPreferences("nsu_transcript_mobile", Context.MODE_PRIVATE)
+    private val gson = Gson()
+    private val api = ApiClient.service
+    private val keyToken = "access_token"
+    private val keyUserId = "online_user_id"
+    private val keyUserEmail = "online_user_email"
+    private val keyUserName = "online_user_name"
+
+    private fun readRuns(): MutableList<RunRecord> {
+        val raw = prefs.getString("runs_json", "[]") ?: "[]"
+        val type = object : TypeToken<MutableList<RunRecord>>() {}.type
+        return gson.fromJson(raw, type) ?: mutableListOf()
+    }
+
+    private fun writeRuns(runs: List<RunRecord>) {
+        prefs.edit().putString("runs_json", gson.toJson(runs)).apply()
+    }
+
+    fun healthMessage(): String = "Offline engine ready"
+
+    fun getSavedAccessToken(): String = prefs.getString(keyToken, "") ?: ""
+
+    fun getSavedOnlineUserId(): Int? {
+        val raw = prefs.getInt(keyUserId, -1)
+        return if (raw > 0) raw else null
+    }
+
+    fun getSavedOnlineUserLabel(): String {
+        val name = prefs.getString(keyUserName, "") ?: ""
+        val email = prefs.getString(keyUserEmail, "") ?: ""
+        return when {
+            name.isNotBlank() && email.isNotBlank() -> "$name ($email)"
+            name.isNotBlank() -> name
+            email.isNotBlank() -> email
+            else -> ""
+        }
+    }
+
+    suspend fun mobileGoogleAuth(idToken: String): MobileAuthUser {
+        val res = api.mobileGoogleAuth(MobileGoogleAuthRequest(id_token = idToken))
+        if (!res.ok || res.access_token.isNullOrBlank() || res.user == null) {
+            throw IllegalStateException(res.error ?: "Google auth failed")
+        }
+        prefs.edit()
+            .putString(keyToken, res.access_token)
+            .putInt(keyUserId, res.user.id)
+            .putString(keyUserEmail, res.user.email)
+            .putString(keyUserName, res.user.name)
+            .apply()
+        return res.user
+    }
+
+    suspend fun mobileAuthMe(): MobileAuthUser {
+        val token = getSavedAccessToken()
+        if (token.isBlank()) throw IllegalStateException("Sign in required")
+        val me = api.mobileAuthMe("Bearer $token")
+        if (!me.ok || me.user == null) throw IllegalStateException(me.error ?: "Session invalid")
+        prefs.edit()
+            .putInt(keyUserId, me.user.id)
+            .putString(keyUserEmail, me.user.email)
+            .putString(keyUserName, me.user.name)
+            .apply()
+        return me.user
+    }
+
+    fun clearOnlineSession() {
+        prefs.edit()
+            .remove(keyToken)
+            .remove(keyUserId)
+            .remove(keyUserEmail)
+            .remove(keyUserName)
+            .apply()
+    }
+
+    private fun authHeader(): String {
+        val token = getSavedAccessToken()
+        if (token.isBlank()) throw IllegalStateException("Sign in required for online mode")
+        return "Bearer $token"
+    }
+
+    suspend fun onlineHealth(): String {
+        val h = api.health()
+        if (!h.ok) return "Backend not ready"
+        return try {
+            val me = mobileAuthMe()
+            "Backend reachable - signed in as ${me.email}"
+        } catch (_: Exception) {
+            "Backend reachable - sign in required"
+        }
+    }
+
+    fun analyzeManual(userId: Int, program: String, manualText: String, waived: List<String> = emptyList()): RunRecord {
+        val runs = readRuns()
+        val nextId = (runs.maxOfOrNull { it.summary.id } ?: 0) + 1
+        val record = AnalysisEngine.analyzeManual(
+            userId = userId,
+            program = program,
+            manualText = manualText,
+            waivedInput = waived,
+            nextRunId = nextId
+        )
+        runs.add(record)
+        writeRuns(runs)
+        return record
+    }
+
+    fun history(userId: Int): List<HistoryItem> {
+        return readRuns()
+            .map { it.summary }
+            .filter { userId <= 0 || it.userId == userId }
+            .sortedByDescending { it.id }
+    }
+
+    fun runById(runId: Int): RunRecord? = readRuns().firstOrNull { it.summary.id == runId }
+
+    fun runDetailsOffline(runId: Int): RunDetails? {
+        val run = runById(runId) ?: return null
+        return RunDetails(
+            run = run.summary,
+            latestRows = run.result.latestRows,
+            issues = run.result.issues,
+            waived = run.result.waived,
+            courseAudit = run.result.courseAudit,
+            cgpaDetails = run.result.cgpaDetails,
+            retakeSummary = run.result.retakeSummary,
+        )
+    }
+
+    suspend fun analyzeOnline(userId: Int, program: String, manualText: String, waived: List<String>): RunRecord {
+        val res = api.analyzeMobile(
+            authorization = authHeader(),
+            MobileAnalyzeRequest(
+                input_method = "manual",
+                program = program,
+                user_id = userId,
+                waived = waived,
+                manual_text = manualText,
+            )
+        )
+        if (!res.ok || res.result == null) {
+            throw IllegalStateException(res.error ?: "Online analyze failed")
+        }
+
+        val payload = res.result
+        val latest = payload.latest_rows.mapNotNull { m ->
+            val code = (m["Course_Code"] ?: m["course_code"])?.toString() ?: return@mapNotNull null
+            val credits = (m["Credits"] ?: m["credits"])?.toString()?.toDoubleOrNull()?.toInt() ?: 0
+            val grade = (m["Grade"] ?: m["grade"])?.toString() ?: "-"
+            val semester = (m["Semester"] ?: m["semester"])?.toString() ?: "-"
+            CourseRow(code, credits, grade, semester)
+        }
+
+        val result = AnalyzeResult(
+            inputMethod = payload.input_method,
+            program = payload.program,
+            cgpa = payload.cgpa,
+            earnedCredits = payload.earned_credits,
+            requiredCredits = payload.required_credits,
+            remainingCredits = payload.remaining_credits,
+            eligible = payload.eligible,
+            waived = payload.waived,
+            issues = payload.issues,
+            latestRows = latest,
+            courseAudit = emptyList(),
+        )
+
+        val summary = HistoryItem(
+            id = res.run_id ?: ((readRuns().maxOfOrNull { it.summary.id } ?: 0) + 1),
+            userId = userId,
+            inputMethod = payload.input_method,
+            program = payload.program,
+            cgpa = payload.cgpa,
+            earnedCredits = payload.earned_credits,
+            requiredCredits = payload.required_credits,
+            eligible = payload.eligible,
+            createdAt = Instant.now().toString(),
+        )
+        return RunRecord(summary, result)
+    }
+
+    suspend fun historyOnline(userId: Int): List<HistoryItem> {
+        val res = api.historyMobile(authHeader())
+        if (!res.ok) {
+            throw IllegalStateException(res.error ?: "Online history failed")
+        }
+        return res.runs.map {
+            HistoryItem(
+                id = it.id,
+                userId = userId,
+                inputMethod = it.input_method,
+                program = it.program,
+                cgpa = it.cgpa,
+                earnedCredits = it.earned_credits,
+                requiredCredits = it.required_credits,
+                eligible = it.eligible,
+                createdAt = it.created_at,
+            )
+        }
+    }
+
+    suspend fun runDetailsOnline(userId: Int, runId: Int): RunDetails {
+        val res = ApiClient.service.historyMobileDetails(authorization = authHeader(), runId = runId)
+        if (!res.ok || res.run == null) throw IllegalStateException("Run not found")
+        val hit = res.run
+        val latestRows = res.latest_rows.mapNotNull { m ->
+            val code = (m["Course_Code"] ?: m["course_code"])?.toString() ?: return@mapNotNull null
+            val credits = (m["Credits"] ?: m["credits"])?.toString()?.toDoubleOrNull()?.toInt() ?: 0
+            val grade = (m["Grade"] ?: m["grade"])?.toString() ?: "-"
+            val semester = (m["Semester"] ?: m["semester"])?.toString() ?: "-"
+            CourseRow(code, credits, grade, semester)
+        }
+        val cgpaDetails = res.cgpa_details.mapNotNull { m ->
+            val course = (m["course"] ?: m["Course"])?.toString() ?: return@mapNotNull null
+            val credits = (m["credits"] ?: m["Credits"])?.toString()?.toDoubleOrNull()?.toInt() ?: 0
+            val grade = (m["grade"] ?: m["Grade"])?.toString() ?: "-"
+            val inCgpa = ((m["in_cgpa"] ?: m["In CGPA"])?.toString() ?: "").equals("Yes", true)
+            val reason = (m["reason"] ?: m["Reason"])?.toString() ?: ""
+            CgpaDetailRow(course, credits, grade, inCgpa, reason)
+        }
+        return RunDetails(
+            run = HistoryItem(
+                id = hit.id,
+                userId = userId,
+                inputMethod = hit.input_method,
+                program = hit.program,
+                cgpa = hit.cgpa,
+                earnedCredits = hit.earned_credits,
+                requiredCredits = hit.required_credits,
+                eligible = hit.eligible,
+                createdAt = hit.created_at,
+            ),
+            latestRows = latestRows,
+            issues = res.issues,
+            waived = res.waived,
+            courseAudit = emptyList(),
+            cgpaDetails = cgpaDetails,
+            retakeSummary = emptyList(),
+        )
+    }
+
+    suspend fun chatOnline(userId: Int, message: String): ChatMessage {
+        val res = api.chat(
+            authorization = authHeader(),
+            ChatRequest(
+                message = message,
+                user_id = userId.toString(),
+                context = mapOf("source" to "android"),
+            )
+        )
+        val chips = res.tool_trace.map { "${it.tool} | ${it.status} | ${it.latency_ms}ms" }
+        return ChatMessage(
+            role = "assistant",
+            text = res.reply,
+            trace = chips,
+        )
+    }
+}

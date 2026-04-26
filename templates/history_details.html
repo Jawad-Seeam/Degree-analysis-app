@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}Run Details | NSU Transcript Analyzer{% endblock %}
+
+{% block content %}
+<section class="panel">
+    <h1>Run Details</h1>
+    <p>
+        {{ run.created_at|localtime('%Y-%m-%d %I:%M %p') }} | {{ run.input_method|upper }} | Program {{ run.program }}
+    </p>
+
+    <div class="metrics">
+        <article><h4>CGPA</h4><p>{{ '%.2f'|format(cgpa) }}</p></article>
+        <article><h4>Earned Credits</h4><p>{{ run.earned_credits }}</p></article>
+        <article><h4>Required Credits</h4><p>{{ run.required_credits }}</p></article>
+        <article><h4>Eligible</h4><p>{{ 'Yes' if run.eligible else 'No' }}</p></article>
+    </div>
+
+    <h3>Latest Attempt per Course</h3>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Course</th>
+                    <th>Credits</th>
+                    <th>Grade</th>
+                    <th>Semester</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in latest_rows %}
+                <tr>
+                    <td>{{ row.Course_Code }}</td>
+                    <td>{{ row.Credits }}</td>
+                    <td>{{ row.Grade }}</td>
+                    <td>{{ row.Semester }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if waived %}
+    <h3>Waived</h3>
+    <p>{{ waived|join(', ') }}</p>
+    {% endif %}
+
+    {% if issues %}
+    <h3>Issues</h3>
+    <ul class="issues">
+        {% for issue in issues %}
+            <li>{{ issue }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    <h3>CGPA Detail</h3>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Course</th>
+                    <th>Credits</th>
+                    <th>Grade</th>
+                    <th>In CGPA</th>
+                    <th>Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in cgpa_details %}
+                <tr>
+                    <td>{{ row.course }}</td>
+                    <td>{{ row.credits }}</td>
+                    <td>{{ row.grade }}</td>
+                    <td>{{ row.in_cgpa }}</td>
+                    <td>{{ row.reason }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}
