@@ -26,6 +26,11 @@ data class MobileGoogleAuthResponse(
     val error: String? = null,
 )
 
+data class MobileEmailAuthRequest(
+    val email: String,
+    val name: String? = null,
+)
+
 data class MobileAuthMeResponse(
     val ok: Boolean,
     val user: MobileAuthUser? = null,
@@ -114,9 +119,29 @@ data class MobileHistoryDetailsResponse(
     val cgpa_details: List<Map<String, Any?>> = emptyList(),
 )
 
+data class OcrParseRequest(
+    val raw_text: String,
+    val source_label: String,
+)
+
+data class OcrParseResponse(
+    val ok: Boolean,
+    val manual_text: String? = null,
+    val confidence: String? = null,
+    val score: Int? = null,
+    val detected_rows: Int? = null,
+    val blocked: Boolean? = null,
+    val warning: String? = null,
+    val preview: String? = null,
+    val error: String? = null,
+)
+
 interface ApiService {
     @POST("/api/mobile/auth/google")
     suspend fun mobileGoogleAuth(@Body request: MobileGoogleAuthRequest): MobileGoogleAuthResponse
+
+    @POST("/api/mobile/auth/email")
+    suspend fun mobileEmailAuth(@Body request: MobileEmailAuthRequest): MobileGoogleAuthResponse
 
     @GET("/api/mobile/auth/me")
     suspend fun mobileAuthMe(@Header("Authorization") authorization: String): MobileAuthMeResponse
@@ -144,4 +169,7 @@ interface ApiService {
         @Header("Authorization") authorization: String,
         @Body request: ChatRequest,
     ): ChatResponse
+
+    @POST("/api/ocr/parse")
+    suspend fun ocrParse(@Body request: OcrParseRequest): OcrParseResponse
 }

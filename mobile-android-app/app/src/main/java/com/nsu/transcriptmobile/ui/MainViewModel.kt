@@ -14,11 +14,13 @@ import com.nsu.transcriptmobile.data.AnalysisEngine
 import com.nsu.transcriptmobile.data.AppMode
 import com.nsu.transcriptmobile.data.ChatMessage
 import com.nsu.transcriptmobile.data.HistoryItem
+import com.nsu.transcriptmobile.data.OcrParseRequest
 import com.nsu.transcriptmobile.data.Repository
 import com.nsu.transcriptmobile.data.RunDetails
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import com.nsu.transcriptmobile.data.ApiClient
 
 data class MainUiState(
     val loading: Boolean = false,
@@ -82,6 +84,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
             } catch (e: Exception) {
                 state = state.copy(loading = false, onlineSignedIn = false, error = e.message ?: "Google sign in failed")
+            }
+            onUpdate(state)
+        }
+    }
+
+    fun completeEmailAuth(email: String, name: String, onUpdate: (MainUiState) -> Unit) {
+        state = state.copy(loading = true, error = null, info = null)
+        onUpdate(state)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val user = repository.mobileEmailAuth(email = email, name = name)
+                state = state.copy(
+                    loading = false,
+                    onlineSignedIn = true,
+                    onlineUserLabel = "${user.name} (${user.email})",
+                    userId = user.id,
+                    info = "Signed in as ${user.email}",
+                )
+            } catch (e: Exception) {
+                state = state.copy(loading = false, onlineSignedIn = false, error = e.message ?: "Email sign in failed")
             }
             onUpdate(state)
         }
@@ -272,7 +294,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val image = InputImage.fromFilePath(app, uri)
                 val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
                 val text = recognizer.process(image).await().text
-                val ocr = AnalysisEngine.ocrToManualWithGuardrails(text, sourceLabel = "Image")
+                val ocr = if (state.mode == AppMode.ONLINE) {
+                    val remote = ApiClient.service.ocrParse(OcrParseRequest(raw_text = text, source_label = "Image"))
+                    if (remote.ok) {
+                        com.nsu.transcriptmobile.data.OcrImportResult(
+                            manualText = remote.manual_text ?: "",
+                            confidence = remote.confidence ?: "LOW",
+                            score = remote.score ?: 0,
+                            detectedRows = remote.detected_rows ?: 0,
+                            blocked = remote.blocked ?: true,
+                            warning = remote.warning,
+                            preview = remote.preview ?: text.take(22000),
+                        )
+                    } else {
+                        AnalysisEngine.ocrToManualWithGuardrails(text, sourceLabel = "Image")
+                    }
+                } else {
+                    AnalysisEngine.ocrToManualWithGuardrails(text, sourceLabel = "Image")
+                }
                 if (ocr.manualText.isBlank()) {
                     state = state.copy(loading = false, error = "OCR did not find valid course rows")
                 } else {
@@ -328,7 +367,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
 
-                val ocr = AnalysisEngine.ocrToManualWithGuardrails(combined.toString(), sourceLabel = "PDF")
+                val combinedText = combined.toString()
+                val ocr = if (state.mode == AppMode.ONLINE) {
+                    val remote = ApiClient.service.ocrParse(OcrParseRequest(raw_text = combinedText, source_label = "PDF"))
+                    if (remote.ok) {
+                        com.nsu.transcriptmobile.data.OcrImportResult(
+                            manualText = remote.manual_text ?: "",
+                            confidence = remote.confidence ?: "LOW",
+                            score = remote.score ?: 0,
+                            detectedRows = remote.detected_rows ?: 0,
+                            blocked = remote.blocked ?: true,
+                            warning = remote.warning,
+                            preview = remote.preview ?: combinedText.take(22000),
+                        )
+                    } else {
+                        AnalysisEngine.ocrToManualWithGuardrails(combinedText, sourceLabel = "PDF")
+                    }
+                } else {
+                    AnalysisEngine.ocrToManualWithGuardrails(combinedText, sourceLabel = "PDF")
+                }
                 if (ocr.manualText.isBlank()) {
                     state = state.copy(loading = false, error = "PDF OCR did not find valid course rows")
                 } else {

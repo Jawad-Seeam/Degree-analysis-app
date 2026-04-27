@@ -1642,6 +1642,53 @@ def register_routes(app):
             }
         )
 
+    @app.route("/api/mobile/auth/email", methods=["POST"])
+    def api_mobile_auth_email():
+        payload = request.get_json(silent=True) or {}
+        email = str(payload.get("email", "") or "").strip().lower()
+        name = str(payload.get("name", "") or "").strip()
+
+        if not email:
+            return jsonify({"ok": False, "error": "email is required"}), 400
+        if not email.endswith("@northsouth.edu"):
+            return jsonify({"ok": False, "error": "Only North South University accounts are allowed"}), 403
+
+        fallback_sub = f"email:{email}"
+        user = User.query.filter_by(email=email).first()
+        if not user:
+            user = User.query.filter_by(google_sub=fallback_sub).first()
+
+        if not user:
+            user = User(
+                google_sub=fallback_sub,
+                email=email,
+                name=name or email.split("@")[0],
+                avatar_url=None,
+            )
+            db.session.add(user)
+        else:
+            user.email = email
+            if name:
+                user.name = name
+
+        db.session.commit()
+
+        token = issue_mobile_token(user)
+        return jsonify(
+            {
+                "ok": True,
+                "access_token": token,
+                "token_type": "Bearer",
+                "expires_in": int(os.getenv("MOBILE_TOKEN_MAX_AGE_SECONDS", "2592000") or "2592000"),
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "name": user.name,
+                    "avatar_url": user.avatar_url,
+                },
+            }
+        )
+
     @app.route("/api/mobile/auth/me", methods=["GET"])
     def api_mobile_auth_me():
         try:
@@ -1742,6 +1789,52 @@ def register_routes(app):
                 "service": "nsu-transcript-analyzer",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "authenticated": current_user.is_authenticated,
+            }
+        )
+
+    @app.route("/api/ocr/parse", methods=["POST"])
+    def api_ocr_parse():
+        payload = request.get_json(silent=True) or {}
+        raw_text = str(payload.get("raw_text", "") or "")
+        source_label = str(payload.get("source_label", "Image") or "Image").strip() or "Image"
+
+        if not raw_text.strip():
+            return jsonify({"ok": False, "error": "raw_text is required"}), 400
+
+        rows = []
+        try:
+            rows = parse_rows_from_text(raw_text)
+        except Exception:
+            rows = []
+
+        signal = analyze_transcript_text_signal(raw_text)
+        confidence = signal.get("confidence", "low")
+        parsed_count = len(rows)
+        meta = {
+            "source": "ocr-parse",
+            "confidence": confidence,
+            "score": signal.get("score", 0),
+            "selected_pages": [1],
+            "total_pages": 1,
+            "parsed_count": parsed_count,
+        }
+        warning = build_signal_warning(meta, source_label)
+        blocked = should_block_low_confidence(meta)
+        manual_text = "\n".join(
+            [f"{r['Course_Code']}, {r['Credits']}, {r['Grade']}, {r['Semester']}" for r in rows]
+        )
+        preview = make_ocr_preview(raw_text, meta=meta)
+
+        return jsonify(
+            {
+                "ok": True,
+                "manual_text": manual_text,
+                "confidence": str(confidence).upper(),
+                "score": int(signal.get("score", 0)),
+                "detected_rows": parsed_count,
+                "blocked": blocked,
+                "warning": warning,
+                "preview": preview,
             }
         )
 

@@ -58,6 +58,20 @@ class Repository(context: Context) {
         return res.user
     }
 
+    suspend fun mobileEmailAuth(email: String, name: String? = null): MobileAuthUser {
+        val res = api.mobileEmailAuth(MobileEmailAuthRequest(email = email.trim(), name = name))
+        if (!res.ok || res.access_token.isNullOrBlank() || res.user == null) {
+            throw IllegalStateException(res.error ?: "Email auth failed")
+        }
+        prefs.edit()
+            .putString(keyToken, res.access_token)
+            .putInt(keyUserId, res.user.id)
+            .putString(keyUserEmail, res.user.email)
+            .putString(keyUserName, res.user.name)
+            .apply()
+        return res.user
+    }
+
     suspend fun mobileAuthMe(): MobileAuthUser {
         val token = getSavedAccessToken()
         if (token.isBlank()) throw IllegalStateException("Sign in required")

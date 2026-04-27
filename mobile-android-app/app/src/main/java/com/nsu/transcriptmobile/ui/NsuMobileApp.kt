@@ -93,7 +93,12 @@ fun NsuMobileApp(vm: MainViewModel = viewModel()) {
                 }
             } catch (e: Exception) {
                 vm.clearMessage()
-                ui = vm.state.copy(error = e.message ?: "Google sign-in failed")
+                val message = if (e is com.google.android.gms.common.api.ApiException && e.statusCode == 10) {
+                    "Google sign-in config mismatch (ApiException 10). Check Android OAuth client package/SHA-1 and GOOGLE_WEB_CLIENT_ID."
+                } else {
+                    e.message ?: "Google sign-in failed"
+                }
+                ui = vm.state.copy(error = message)
             }
         }
     }
@@ -191,6 +196,7 @@ fun NsuMobileApp(vm: MainViewModel = viewModel()) {
                     ui = ui,
                     onModeChange = { mode -> vm.setMode(mode) { ui = it } },
                     onGoogleSignIn = { startGoogleSignIn() },
+                    onEmailSignIn = { email, name -> vm.completeEmailAuth(email, name) { ui = it } },
                     onGoogleSignOut = { vm.signOutOnline { ui = it } }
                 )
 
@@ -242,8 +248,11 @@ private fun HomeTab(
     ui: MainUiState,
     onModeChange: (AppMode) -> Unit,
     onGoogleSignIn: () -> Unit,
+    onEmailSignIn: (String, String) -> Unit,
     onGoogleSignOut: () -> Unit,
 ) {
+    var emailInput by remember { mutableStateOf("") }
+    var nameInput by remember { mutableStateOf("") }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -293,6 +302,27 @@ private fun HomeTab(
                     Text("Not signed in", color = Color(0xFFFFB2B2))
                     Spacer(Modifier.height(8.dp))
                     Button(onClick = onGoogleSignIn) { Text("Sign in with Google") }
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = emailInput,
+                        onValueChange = { emailInput = it },
+                        label = { Text("Fallback Email (@northsouth.edu)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = nameInput,
+                        onValueChange = { nameInput = it },
+                        label = { Text("Name (optional)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = { onEmailSignIn(emailInput.trim(), nameInput.trim()) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Fallback Sign In")
+                    }
                 }
             }
         }
