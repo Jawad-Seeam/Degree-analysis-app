@@ -276,7 +276,13 @@ class Repository(context: Context) {
                 context = mapOf("source" to "android"),
             )
         )
-        val chips = res.tool_trace.map { "${it.tool} | ${it.status} | ${it.latency_ms}ms" }
+        val chips = res.tool_trace.map { "${it.tool} | ${it.status} | ${it.latency_ms}ms" }.toMutableList()
+        if (res.fallback_used) {
+            chips.add("fallback | used | 0ms")
+        }
+        if (res.request_id.isNotBlank()) {
+            chips.add("request_id | ${res.request_id} | 0ms")
+        }
         return ChatMessage(
             role = "assistant",
             text = res.reply,

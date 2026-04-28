@@ -631,6 +631,32 @@ private fun AnalyzeTab(
                             .fillMaxWidth()
                             .height(170.dp)
                     )
+
+                    val parsedRows = ui.manualText
+                        .lines()
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() && it.contains(",") }
+                        .take(12)
+                    if (parsedRows.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text("Likely Course Rows", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        parsedRows.forEach { line ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF15224A)),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = line,
+                                    color = Color(0xFFC9D7FF),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -734,7 +760,19 @@ private fun HistoryTab(
                     Spacer(Modifier.height(10.dp))
                     Text("Latest Rows", color = Color.White, fontWeight = FontWeight.SemiBold)
                     details.latestRows.take(20).forEach { row ->
-                        Text("- ${row.courseCode} | ${row.grade} | ${row.credits} cr | ${row.semester}", color = Color(0xFFC9D7FF))
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF15224A)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text("${row.courseCode}", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Spacer(Modifier.height(4.dp))
+                                Text("Credits: ${row.credits} | Grade: ${row.grade} | Semester: ${row.semester}", color = Color(0xFFC9D7FF))
+                            }
+                        }
                     }
 
                     Spacer(Modifier.height(10.dp))
@@ -749,7 +787,12 @@ private fun HistoryTab(
                         Spacer(Modifier.height(10.dp))
                         Text("Audit", color = Color.White, fontWeight = FontWeight.SemiBold)
                         details.courseAudit.take(25).forEach {
-                            Text("- ${it.course}: ${it.status} (${it.category})", color = Color(0xFFC9D7FF))
+                            val statusColor = when (it.status.uppercase()) {
+                                "COMPLETED", "WAIVED" -> Color(0xFF8EF2D9)
+                                "MISSING", "FAILED", "INCOMPLETE" -> Color(0xFFFFB2B2)
+                                else -> Color(0xFFC9D7FF)
+                            }
+                            Text("- ${it.category} | ${it.course} | ${it.status} | ${it.details}", color = statusColor)
                         }
                     }
 
@@ -844,7 +887,21 @@ private fun ChatBubble(msg: ChatMessage) {
             Text(msg.text, color = Color.White)
             if (msg.trace.isNotEmpty()) {
                 Spacer(Modifier.height(6.dp))
-                msg.trace.forEach { t -> Text("- $t", color = Color(0xFF7CDCCF)) }
+                msg.trace.forEach { t ->
+                    val low = t.lowercase()
+                    val ok = low.contains("| ok |")
+                    val chipColor = if (ok) Color(0xFF1E4C44) else Color(0xFF4A222C)
+                    val textColor = if (ok) Color(0xFF94F5E7) else Color(0xFFFFB7C2)
+                    Box(
+                        modifier = Modifier
+                            .padding(vertical = 2.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(chipColor)
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(t, color = textColor)
+                    }
+                }
             }
         }
     }
