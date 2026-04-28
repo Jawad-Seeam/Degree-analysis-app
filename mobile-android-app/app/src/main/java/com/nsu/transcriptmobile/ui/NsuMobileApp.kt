@@ -511,10 +511,10 @@ private fun AnalyzeTab(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(12.dp))
-                Button(onClick = onAnalyze, modifier = Modifier.fillMaxWidth(), enabled = !ui.ocrBlocked) { Text("Run Analysis") }
+                Button(onClick = onAnalyze, modifier = Modifier.fillMaxWidth()) { Text("Run Analysis") }
                 if (ui.ocrBlocked) {
                     Spacer(Modifier.height(6.dp))
-                    Text("Analysis blocked due to low OCR confidence. Edit rows above to continue.", color = Color(0xFFFFA3B1))
+                    Text("OCR guardrail warning: review rows before running analysis.", color = Color(0xFFFFA3B1))
                 }
             }
         }

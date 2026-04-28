@@ -1,26 +1,20 @@
 package com.nsu.transcriptmobile.ui
 
 import android.app.Application
-import android.graphics.Bitmap
-import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.nsu.transcriptmobile.data.AnalyzeResult
 import com.nsu.transcriptmobile.data.AnalysisEngine
 import com.nsu.transcriptmobile.data.AppMode
 import com.nsu.transcriptmobile.data.ChatMessage
 import com.nsu.transcriptmobile.data.HistoryItem
-import com.nsu.transcriptmobile.data.OcrParseRequest
 import com.nsu.transcriptmobile.data.Repository
 import com.nsu.transcriptmobile.data.RunDetails
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import com.nsu.transcriptmobile.data.OcrImportResult
 import kotlinx.coroutines.tasks.await
-import com.nsu.transcriptmobile.data.ApiClient
 
 data class MainUiState(
     val loading: Boolean = false,
@@ -125,7 +119,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun updateManualText(value: String) {
-        state = state.copy(manualText = value)
+        state = state.copy(manualText = value, ocrBlocked = false)
     }
 
     fun updateWaivedText(value: String) {
@@ -161,10 +155,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         onUpdate(state)
         viewModelScope.launch(Dispatchers.Default) {
             try {
-                if (state.ocrBlocked) {
-                    throw IllegalStateException("Analysis blocked due to low OCR confidence. Please correct rows manually first.")
-                }
-
                 val waived = state.waivedText
                     .split(",")
                     .map { it.trim().uppercase() }
@@ -276,7 +266,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (manual.isBlank()) {
                     state = state.copy(loading = false, error = "Could not detect rows from CSV")
                 } else {
-                    state = state.copy(loading = false, manualText = manual, info = "CSV imported into editor")
+                    state = state.copy(loading = false, manualText = manual, ocrBlocked = false, info = "CSV imported into editor")
                 }
             } catch (e: Exception) {
                 state = state.copy(loading = false, error = e.message ?: "CSV import failed")
@@ -290,26 +280,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         onUpdate(state)
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val app = getApplication<Application>()
-                val image = InputImage.fromFilePath(app, uri)
-                val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-                val text = recognizer.process(image).await().text
-                val ocr = if (state.mode == AppMode.ONLINE) {
-                    val remote = ApiClient.service.ocrParse(OcrParseRequest(raw_text = text, source_label = "Image"))
-                    if (remote.ok) {
-                        com.nsu.transcriptmobile.data.OcrImportResult(
-                            manualText = remote.manual_text ?: "",
-                            confidence = remote.confidence ?: "LOW",
-                            score = remote.score ?: 0,
-                            detectedRows = remote.detected_rows ?: 0,
-                            blocked = remote.blocked ?: true,
-                            warning = remote.warning,
-                            preview = remote.preview ?: text.take(22000),
-                        )
-                    } else {
-                        AnalysisEngine.ocrToManualWithGuardrails(text, sourceLabel = "Image")
-                    }
+                val ocr: OcrImportResult = if (state.mode == AppMode.ONLINE) {
+                    repository.ocrExtractOnline(uri = uri, inputMethod = "image", sourceLabel = "Image")
                 } else {
+                    val app = getApplication<Application>()
+                    val image = com.google.mlkit.vision.common.InputImage.fromFilePath(app, uri)
+                    val recognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
+                        com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS
+                    )
+                    val text = recognizer.process(image).await().text
                     AnalysisEngine.ocrToManualWithGuardrails(text, sourceLabel = "Image")
                 }
                 if (ocr.manualText.isBlank()) {
@@ -343,48 +322,38 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         onUpdate(state)
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val app = getApplication<Application>()
-                val resolver = app.contentResolver
-                val pfd = resolver.openFileDescriptor(uri, "r") ?: throw IllegalStateException("Cannot open PDF")
-
-                val combined = StringBuilder()
-                pfd.use { descriptor ->
-                    PdfRenderer(descriptor).use { renderer ->
-                        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-                        val pageCount = renderer.pageCount
-                        val maxPages = if (pageCount > 12) 12 else pageCount
-                        for (i in 0 until maxPages) {
-                            renderer.openPage(i).use { page ->
-                                val bitmap = Bitmap.createBitmap(page.width * 2, page.height * 2, Bitmap.Config.ARGB_8888)
-                                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                                val image = InputImage.fromBitmap(bitmap, 0)
-                                val txt = recognizer.process(image).await().text
-                                if (txt.isNotBlank()) {
-                                    combined.append(txt).append("\n\n")
+                val ocr: OcrImportResult = if (state.mode == AppMode.ONLINE) {
+                    repository.ocrExtractOnline(uri = uri, inputMethod = "pdf", sourceLabel = "PDF")
+                } else {
+                    val app = getApplication<Application>()
+                    val resolver = app.contentResolver
+                    val pfd = resolver.openFileDescriptor(uri, "r") ?: throw IllegalStateException("Cannot open PDF")
+                    val combined = StringBuilder()
+                    pfd.use { descriptor ->
+                        android.graphics.pdf.PdfRenderer(descriptor).use { renderer ->
+                            val recognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
+                                com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS
+                            )
+                            val pageCount = renderer.pageCount
+                            val maxPages = if (pageCount > 12) 12 else pageCount
+                            for (i in 0 until maxPages) {
+                                renderer.openPage(i).use { page ->
+                                    val bitmap = android.graphics.Bitmap.createBitmap(
+                                        page.width * 2,
+                                        page.height * 2,
+                                        android.graphics.Bitmap.Config.ARGB_8888
+                                    )
+                                    page.render(bitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                    val image = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0)
+                                    val txt = recognizer.process(image).await().text
+                                    if (txt.isNotBlank()) {
+                                        combined.append(txt).append("\n\n")
+                                    }
                                 }
                             }
                         }
                     }
-                }
-
-                val combinedText = combined.toString()
-                val ocr = if (state.mode == AppMode.ONLINE) {
-                    val remote = ApiClient.service.ocrParse(OcrParseRequest(raw_text = combinedText, source_label = "PDF"))
-                    if (remote.ok) {
-                        com.nsu.transcriptmobile.data.OcrImportResult(
-                            manualText = remote.manual_text ?: "",
-                            confidence = remote.confidence ?: "LOW",
-                            score = remote.score ?: 0,
-                            detectedRows = remote.detected_rows ?: 0,
-                            blocked = remote.blocked ?: true,
-                            warning = remote.warning,
-                            preview = remote.preview ?: combinedText.take(22000),
-                        )
-                    } else {
-                        AnalysisEngine.ocrToManualWithGuardrails(combinedText, sourceLabel = "PDF")
-                    }
-                } else {
-                    AnalysisEngine.ocrToManualWithGuardrails(combinedText, sourceLabel = "PDF")
+                    AnalysisEngine.ocrToManualWithGuardrails(combined.toString(), sourceLabel = "PDF")
                 }
                 if (ocr.manualText.isBlank()) {
                     state = state.copy(loading = false, error = "PDF OCR did not find valid course rows")

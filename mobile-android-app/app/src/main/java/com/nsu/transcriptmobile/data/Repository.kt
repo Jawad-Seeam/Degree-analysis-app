@@ -1,12 +1,19 @@
 package com.nsu.transcriptmobile.data
 
 import android.content.Context
+import android.net.Uri
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
 import java.time.Instant
 
 class Repository(context: Context) {
-    private val prefs = context.getSharedPreferences("nsu_transcript_mobile", Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences("nsu_transcript_mobile", Context.MODE_PRIVATE)
     private val gson = Gson()
     private val api = ApiClient.service
     private val keyToken = "access_token"
@@ -275,5 +282,59 @@ class Repository(context: Context) {
             text = res.reply,
             trace = chips,
         )
+    }
+
+    suspend fun ocrExtractOnline(uri: Uri, inputMethod: String, sourceLabel: String = "Transcript"): OcrImportResult {
+        val auth = authHeader()
+        val method = inputMethod.lowercase().trim()
+        if (method != "pdf" && method != "image") {
+            throw IllegalArgumentException("inputMethod must be pdf or image")
+        }
+
+        val resolver = appContext.contentResolver
+        val fileName = resolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (cursor.moveToFirst() && nameIdx >= 0) cursor.getString(nameIdx) else null
+        } ?: if (method == "pdf") "upload.pdf" else "upload.jpg"
+
+        val mime = resolver.getType(uri) ?: if (method == "pdf") "application/pdf" else "image/*"
+        val suffix = if (method == "pdf") ".pdf" else ".img"
+        val tmp = File.createTempFile("ocr_upload_", suffix, appContext.cacheDir)
+        resolver.openInputStream(uri)?.use { input ->
+            tmp.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        } ?: throw IllegalStateException("Could not read selected file")
+
+        try {
+            val fileBody = tmp.asRequestBody(mime.toMediaType())
+            val partName = if (method == "pdf") "pdf_file" else "image_file"
+            val filePart = MultipartBody.Part.createFormData(partName, fileName, fileBody)
+            val methodPart = method.toRequestBody("text/plain".toMediaType())
+            val sourcePart = sourceLabel.toRequestBody("text/plain".toMediaType())
+
+            val res = api.ocrExtract(
+                authorization = auth,
+                inputMethod = methodPart,
+                sourceLabel = sourcePart,
+                filePart = filePart,
+            )
+
+            if (!res.ok) {
+                throw IllegalStateException(res.error ?: "OCR extraction failed")
+            }
+
+            return OcrImportResult(
+                manualText = res.manual_text ?: "",
+                confidence = res.confidence ?: "LOW",
+                score = res.score ?: 0,
+                detectedRows = res.detected_rows ?: 0,
+                blocked = res.blocked ?: true,
+                warning = res.warning,
+                preview = res.preview ?: "",
+            )
+        } finally {
+            tmp.delete()
+        }
     }
 }

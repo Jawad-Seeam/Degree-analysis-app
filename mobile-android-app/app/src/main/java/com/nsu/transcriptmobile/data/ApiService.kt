@@ -3,8 +3,12 @@ package com.nsu.transcriptmobile.data
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Header
+import retrofit2.http.Multipart
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.Part
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
 
 data class MobileGoogleAuthRequest(
     val id_token: String,
@@ -136,6 +140,18 @@ data class OcrParseResponse(
     val error: String? = null,
 )
 
+data class OcrExtractResponse(
+    val ok: Boolean,
+    val manual_text: String? = null,
+    val confidence: String? = null,
+    val score: Int? = null,
+    val detected_rows: Int? = null,
+    val blocked: Boolean? = null,
+    val warning: String? = null,
+    val preview: String? = null,
+    val error: String? = null,
+)
+
 interface ApiService {
     @POST("/api/mobile/auth/google")
     suspend fun mobileGoogleAuth(@Body request: MobileGoogleAuthRequest): MobileGoogleAuthResponse
@@ -164,7 +180,7 @@ interface ApiService {
         @Path("run_id") runId: Int,
     ): MobileHistoryDetailsResponse
 
-    @POST("/api/ai/chat")
+    @POST("/api/mobile/ai/chat")
     suspend fun chat(
         @Header("Authorization") authorization: String,
         @Body request: ChatRequest,
@@ -172,4 +188,13 @@ interface ApiService {
 
     @POST("/api/ocr/parse")
     suspend fun ocrParse(@Body request: OcrParseRequest): OcrParseResponse
+
+    @Multipart
+    @POST("/api/mobile/ocr/extract")
+    suspend fun ocrExtract(
+        @Header("Authorization") authorization: String,
+        @Part("input_method") inputMethod: RequestBody,
+        @Part("source_label") sourceLabel: RequestBody,
+        @Part filePart: MultipartBody.Part,
+    ): OcrExtractResponse
 }

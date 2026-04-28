@@ -1781,6 +1781,128 @@ def register_routes(app):
             return jsonify({"ok": False, "error": "Run not found"}), 404
         return jsonify({"ok": True, **run_to_details(run)})
 
+    @app.route("/api/mobile/ocr/extract", methods=["POST"])
+    def api_mobile_ocr_extract():
+        try:
+            resolve_mobile_auth_user(request)
+        except Exception:
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+        input_method = str(request.form.get("input_method", "")).strip().lower()
+        source_label = str(request.form.get("source_label", "Transcript") or "Transcript").strip()
+        if input_method not in {"pdf", "image"}:
+            return jsonify({"ok": False, "error": "input_method must be 'pdf' or 'image'"}), 400
+
+        file_key = "pdf_file" if input_method == "pdf" else "image_file"
+        uploaded = request.files.get(file_key) or request.files.get("file")
+        if not uploaded or uploaded.filename == "":
+            return jsonify({"ok": False, "error": f"Missing upload for {file_key}"}), 400
+
+        try:
+            if input_method == "pdf":
+                raw_text, meta = extract_text_from_pdf(uploaded)
+            else:
+                raw_text, meta = extract_text_from_image(uploaded)
+        except Exception as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
+        rows = []
+        try:
+            rows = parse_rows_from_text(raw_text)
+        except Exception:
+            rows = []
+
+        signal = analyze_transcript_text_signal(raw_text)
+        detected_rows = len(rows)
+        confidence = str((meta or {}).get("confidence") or signal.get("confidence", "low")).upper()
+        score = int((meta or {}).get("score", signal.get("score", 0)))
+        effective_meta = {
+            "source": input_method,
+            "confidence": confidence.lower(),
+            "score": score,
+            "selected_pages": (meta or {}).get("selected_pages", [1]),
+            "total_pages": (meta or {}).get("total_pages", 1),
+            "parsed_count": detected_rows,
+        }
+        blocked = should_block_low_confidence(effective_meta)
+        warning = build_signal_warning(effective_meta, source_label)
+        preview = make_ocr_preview(raw_text, meta=effective_meta)
+        manual_text = "\n".join(
+            [f"{r['Course_Code']}, {r['Credits']}, {r['Grade']}, {r['Semester']}" for r in rows]
+        )
+
+        return jsonify(
+            {
+                "ok": True,
+                "manual_text": manual_text,
+                "confidence": confidence,
+                "score": score,
+                "detected_rows": detected_rows,
+                "blocked": blocked,
+                "warning": warning,
+                "preview": preview,
+            }
+        )
+
+    @app.route("/api/mobile/ai/chat", methods=["POST"])
+    def api_mobile_ai_chat():
+        from ai.mcp_client import MCPClientError
+        from ai.orchestrator import MCPGuardrailError, build_orchestrator
+
+        payload = request.get_json(silent=True) or {}
+        message = str(payload.get("message", "") or "").strip()
+        context = payload.get("context", {})
+        if not isinstance(context, dict):
+            context = {}
+
+        try:
+            user = resolve_mobile_auth_user(request)
+            user_id = str(user.id)
+        except Exception:
+            return jsonify({"reply": "Sign in required for chat", "tool_trace": [], "request_id": "-", "fallback_used": True}), 401
+
+        if not message:
+            return jsonify({"reply": "Message is required", "tool_trace": [], "request_id": "-", "fallback_used": True}), 400
+
+        orchestrator = build_orchestrator()
+        try:
+            result = orchestrator.chat(message=message, user_id=user_id, context=context)
+            return jsonify(
+                {
+                    "reply": result.get("reply", ""),
+                    "tool_trace": result.get("tool_trace", []),
+                    "request_id": result.get("request_id", "-"),
+                    "fallback_used": bool(result.get("fallback_used", False)),
+                }
+            )
+        except MCPGuardrailError as exc:
+            return jsonify(
+                {
+                    "reply": f"Tool blocked: {exc.message}",
+                    "tool_trace": [{"tool": "guardrail", "status": exc.code.lower(), "latency_ms": 0}],
+                    "request_id": "-",
+                    "fallback_used": True,
+                }
+            )
+        except MCPClientError:
+            return jsonify(
+                {
+                    "reply": "I could not complete tool execution right now. Please retry.",
+                    "tool_trace": [{"tool": "transcript_lookup", "status": "error", "latency_ms": 0}],
+                    "request_id": "-",
+                    "fallback_used": True,
+                }
+            )
+        except Exception:
+            return jsonify(
+                {
+                    "reply": "Unexpected backend error while processing chat.",
+                    "tool_trace": [{"tool": "chat", "status": "error", "latency_ms": 0}],
+                    "request_id": "-",
+                    "fallback_used": True,
+                }
+            )
+
     @app.route("/api/health", methods=["GET"])
     def api_health():
         return jsonify(
