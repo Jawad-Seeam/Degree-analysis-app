@@ -155,15 +155,28 @@ class Repository(context: Context) {
         )
     }
 
-    suspend fun analyzeOnline(userId: Int, program: String, manualText: String, waived: List<String>): RunRecord {
+    suspend fun analyzeOnline(
+        userId: Int,
+        program: String,
+        inputMethod: String,
+        manualText: String,
+        csvText: String,
+        waived: List<String>
+    ): RunRecord {
+        val method = inputMethod.lowercase().trim().ifBlank { "manual" }
+        if (method != "manual" && method != "csv") {
+            throw IllegalStateException("Online analyze supports manual/csv input")
+        }
+
         val res = api.analyzeMobile(
             authorization = authHeader(),
             MobileAnalyzeRequest(
-                input_method = "manual",
+                input_method = method,
                 program = program,
                 user_id = userId,
                 waived = waived,
-                manual_text = manualText,
+                manual_text = if (method == "manual") manualText else null,
+                csv_text = if (method == "csv") csvText else null,
             )
         )
         if (!res.ok || res.result == null) {

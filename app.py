@@ -255,11 +255,11 @@ def read_rows_from_manual(text):
 def parse_rows_from_text(raw_text):
     raw_text = normalize_transcript_ocr_text(raw_text)
     csv_re = re.compile(
-        r"([A-Za-z]{2,4}\d{3}[A-Za-z]?)\s*[,\t]\s*(\d+(?:\.\d+)?)\s*[,\t]\s*(A\-|A|B\+|B|B\-|C\+|C|C\-|D\+|D|F|W)\s*[,\t]\s*(Spring|Summer|Fall)\s*[-/ ]?\s*(\d{4})",
+        r"([A-Za-z]{2,4}\s?[0-9IOL]{3}[A-Za-z]?)\s*[,\t]\s*(\d+(?:\.\d+)?)\s*[,\t]\s*(A\-|A|B\+|B|B\-|C\+|C|C\-|D\+|D|F|W)\s*[,\t]\s*(Spring|Summer|Fall)\s*[-/ ]?\s*(\d{4})",
         re.IGNORECASE,
     )
     ws_re = re.compile(
-        r"([A-Za-z]{2,4}\d{3}[A-Za-z]?)\s+(\d+(?:\.\d+)?)\s+(A\-|A|B\+|B|B\-|C\+|C|C\-|D\+|D|F|W)\s+(Spring|Summer|Fall)\s*[-/ ]?\s*(\d{4})",
+        r"([A-Za-z]{2,4}\s?[0-9IOL]{3}[A-Za-z]?)\s+(\d+(?:\.\d+)?)\s+(A\-|A|B\+|B\s*\+?\s*|B\-|C\+|C|C\-|D\+|D|F|W)\s+(Spring|Summer|Fall)\s*[-/ ]?\s*(\d{4})",
         re.IGNORECASE,
     )
 
@@ -267,7 +267,11 @@ def parse_rows_from_text(raw_text):
     for pattern in (csv_re, ws_re):
         for match in pattern.findall(raw_text):
             code, credits, grade, season, year = match
-            rows.append(normalize_row(code, credits, grade, f"{season.title()} {year}"))
+            norm_code = normalize_course_code_token(code)
+            norm_grade = normalize_grade_token(grade)
+            if not norm_code or norm_grade not in VALID_GRADES:
+                continue
+            rows.append(normalize_row(norm_code, credits, norm_grade, f"{season.title()} {year}"))
         if rows:
             break
 
@@ -361,7 +365,6 @@ def parse_rows_from_structured_lines(raw_text):
 def parse_rows_from_transcript_layout(raw_text):
     semester_re = re.compile(r"\b(Spring|Summer|Fall)\s*[-/ ]?\s*(\d{4})\b", re.IGNORECASE)
     code_re = re.compile(r"(?<![A-Z0-9])([A-Z]{2,4}[0-9IOL]{3}[A-Z]?)(?![A-Z0-9])", re.IGNORECASE)
-    grade_re = re.compile(r"\b(A\-|A|B\+|BT|B00|BOO|B|B\-|C\+|C|C\-|D\+|D|F|W)\b", re.IGNORECASE)
     number_re = re.compile(r"\d+(?:\.\d+)?")
 
     rows = []
@@ -402,19 +405,22 @@ def parse_rows_from_transcript_layout(raw_text):
             end = code_hits[idx + 1].start() if idx + 1 < len(code_hits) else len(line)
             segment = line[start:end].strip()
 
-            grade_match = grade_re.search(segment)
-            if not grade_match:
+            grade = detect_grade_with_fallback(segment)
+            if not grade:
                 continue
-
             code = normalize_course_code_token(hit.group(1))
-            grade = normalize_grade_token(grade_match.group(1))
             if not code or grade not in VALID_GRADES:
                 continue
             if is_suspicious_course_code(code):
                 continue
 
-            before_grade = segment[: grade_match.start()]
-            after_grade = segment[grade_match.end() :]
+            gmatch = re.search(r"\b(A\-|A|B\+|BT|B00|BOO|B|B\-|C\+|C|C\-|D\+|D|F|W)\b", segment, re.IGNORECASE)
+            if gmatch:
+                before_grade = segment[: gmatch.start()]
+                after_grade = segment[gmatch.end() :]
+            else:
+                before_grade = segment
+                after_grade = segment
             credits_float = pick_credit_value(number_re.findall(before_grade))
             if credits_float is None:
                 credits_float = pick_credit_value(number_re.findall(after_grade))
@@ -446,6 +452,9 @@ def normalize_transcript_ocr_text(raw_text):
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
+    text = re.sub(r"\b([A-Za-z]{2,4})\s+([0-9IOL]{3}[A-Za-z]?)\b", r"\1\2", text)
+    text = re.sub(r"\b([A-FW])\s*\+\b", r"\1+", text)
+    text = re.sub(r"\b([A-FW])\s*\-\b", r"\1-", text)
     return text
 
 
@@ -462,6 +471,7 @@ def normalize_course_code_token(token):
     allowed_prefixes = {
         "ACT", "ARC", "BAN", "BIO", "BUS", "CHE", "CIV", "CO", "CSE", "ECO", "EEE", "ENG", "ENV",
         "FIN", "HIS", "INT", "LAW", "MAT", "MGT", "MIS", "MKT", "PAD", "PHY", "POL", "SOC", "STA",
+        "BEN", "INB", "BUS", "HIS",
     }
     if prefix not in allowed_prefixes:
         return ""
@@ -492,6 +502,32 @@ def pick_credit_value(number_tokens):
     if not candidates:
         return None
     return candidates[0]
+
+
+def detect_grade_with_fallback(text):
+    grade_re = re.compile(r"\b(A\-|A|B\+|BT|B00|BOO|B|B\-|C\+|C|C\-|D\+|D|F|W)\b", re.IGNORECASE)
+    hit = grade_re.search(text or "")
+    if hit:
+        return normalize_grade_token(hit.group(1))
+
+    loose = (text or "").upper()
+    if re.search(r"\bA\s*\+\b", loose):
+        return "A"
+    if re.search(r"\bA\s*\-\b", loose):
+        return "A-"
+    if re.search(r"\bB\s*\+\b", loose):
+        return "B+"
+    if re.search(r"\bB\s*\-\b", loose):
+        return "B-"
+    if re.search(r"\bC\s*\+\b", loose):
+        return "C+"
+    if re.search(r"\bC\s*\-\b", loose):
+        return "C-"
+    if re.search(r"\bD\s*\+\b", loose):
+        return "D+"
+    if re.search(r"\b[A-FW]\b", loose):
+        return re.search(r"\b([A-FW])\b", loose).group(1)
+    return ""
 
 
 def is_suspicious_course_code(code):
@@ -1203,7 +1239,6 @@ def build_ocr_preview_payload(text, rows, meta=None):
 def extract_structured_line_details(text):
     semester_re = re.compile(r"\b(Spring|Summer|Fall)\s*[-/ ]?\s*(\d{4})\b", re.IGNORECASE)
     code_re = re.compile(r"(?<![A-Z0-9])([A-Z]{2,4}[0-9IOL]{3}[A-Z]?)(?![A-Z0-9])", re.IGNORECASE)
-    grade_re = re.compile(r"\b(A\-|A|B\+|BT|B00|BOO|B|B\-|C\+|C|C\-|D\+|D|F|W)\b", re.IGNORECASE)
     number_re = re.compile(r"\d+(?:\.\d+)?")
 
     details = []
@@ -1238,16 +1273,19 @@ def extract_structured_line_details(text):
             if not code or is_suspicious_course_code(code):
                 continue
 
-            grade_match = grade_re.search(segment)
-            if not grade_match:
+            grade = detect_grade_with_fallback(segment)
+            if not grade:
                 continue
-
-            grade = normalize_grade_token(grade_match.group(1))
             if grade not in VALID_GRADES:
                 continue
 
-            before = segment[: grade_match.start()].strip()
-            after = segment[grade_match.end() :].strip()
+            gmatch = re.search(r"\b(A\-|A|B\+|BT|B00|BOO|B|B\-|C\+|C|C\-|D\+|D|F|W)\b", segment, re.IGNORECASE)
+            if gmatch:
+                before = segment[: gmatch.start()].strip()
+                after = segment[gmatch.end() :].strip()
+            else:
+                before = segment.strip()
+                after = segment.strip()
             numbers_before = [normalize_credit_token(n) for n in number_re.findall(before)]
             numbers_before = [n for n in numbers_before if n is not None]
             numbers_after = [normalize_credit_token(n) for n in number_re.findall(after)]

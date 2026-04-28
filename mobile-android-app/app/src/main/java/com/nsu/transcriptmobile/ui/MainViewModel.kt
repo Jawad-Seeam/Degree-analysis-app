@@ -27,6 +27,8 @@ data class MainUiState(
     val program: String = "CSE",
     val manualText: String = "CSE115, 4, A-, Spring 2024\nMAT116, 3, B+, Fall 2023",
     val waivedText: String = "",
+    val selectedInputMethod: String = "manual",
+    val importedCsvText: String = "",
     val ocrPreview: String = "",
     val ocrConfidence: String = "",
     val ocrScore: Int = 0,
@@ -122,6 +124,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         state = state.copy(manualText = value, ocrBlocked = false)
     }
 
+    fun updateSelectedInputMethod(value: String) {
+        state = state.copy(selectedInputMethod = value.lowercase().trim())
+    }
+
     fun updateWaivedText(value: String) {
         state = state.copy(waivedText = value)
     }
@@ -171,7 +177,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     repository.analyzeOnline(
                         userId = state.userId,
                         program = state.program,
+                        inputMethod = state.selectedInputMethod,
                         manualText = state.manualText,
+                        csvText = state.importedCsvText,
                         waived = waived,
                     )
                 }
@@ -266,7 +274,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (manual.isBlank()) {
                     state = state.copy(loading = false, error = "Could not detect rows from CSV")
                 } else {
-                    state = state.copy(loading = false, manualText = manual, ocrBlocked = false, info = "CSV imported into editor")
+                    state = state.copy(
+                        loading = false,
+                        manualText = manual,
+                        importedCsvText = csvText,
+                        selectedInputMethod = "csv",
+                        ocrBlocked = false,
+                        info = "CSV imported into editor"
+                    )
                 }
             } catch (e: Exception) {
                 state = state.copy(loading = false, error = e.message ?: "CSV import failed")

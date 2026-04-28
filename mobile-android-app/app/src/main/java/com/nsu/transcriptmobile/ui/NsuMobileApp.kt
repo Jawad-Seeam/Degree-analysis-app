@@ -205,7 +205,17 @@ fun NsuMobileApp(vm: MainViewModel = viewModel()) {
                 ScreenTab.ANALYZE -> AnalyzeTab(
                     ui = ui,
                     selectedInput = analyzeInput,
-                    onSelectInput = { analyzeInput = it },
+                    onSelectInput = {
+                        analyzeInput = it
+                        val method = when (it) {
+                            AnalyzeInputMethod.MANUAL -> "manual"
+                            AnalyzeInputMethod.CSV -> "csv"
+                            AnalyzeInputMethod.PDF -> "manual"
+                            AnalyzeInputMethod.IMAGE -> "manual"
+                        }
+                        vm.updateSelectedInputMethod(method)
+                        ui = vm.state
+                    },
                     onProgram = { vm.updateProgram(it); ui = vm.state },
                     onText = { vm.updateManualText(it); ui = vm.state },
                     onWaived = { vm.updateWaivedText(it); ui = vm.state },
@@ -508,6 +518,16 @@ private fun AnalyzeTab(
                         )
                     )
                 }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    when (selectedInput) {
+                        AnalyzeInputMethod.MANUAL -> "Manual mode will submit manual_text like web Manual input."
+                        AnalyzeInputMethod.CSV -> "CSV mode will submit csv_text like web CSV upload."
+                        AnalyzeInputMethod.PDF -> "PDF mode extracts OCR rows, then analyzes using manual rows."
+                        AnalyzeInputMethod.IMAGE -> "Image mode extracts OCR rows, then analyzes using manual rows."
+                    },
+                    color = Color(0xFF9CB3FF)
+                )
             }
         }
 
@@ -844,6 +864,34 @@ private fun ProfileTab(ui: MainUiState) {
                     "Offline mode: local engine + local history. Online mode: backend APIs + MCP chat.",
                     color = Color(0xFFC9D7FF)
                 )
+            }
+        }
+        item {
+            CardBlock {
+                Text("Account", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                if (ui.onlineSignedIn) {
+                    Text("Online session active", color = Color(0xFF8EF2D9))
+                    if (ui.onlineUserLabel.isNotBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(ui.onlineUserLabel, color = Color(0xFFC9D7FF))
+                    }
+                } else {
+                    Text("Online session not signed in", color = Color(0xFFFFB2B2))
+                }
+            }
+        }
+        item {
+            CardBlock {
+                Text("Current Analyze Context", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                Text("Input method: ${ui.selectedInputMethod.uppercase()}", color = Color(0xFF9CB3FF))
+                Text("OCR confidence: ${if (ui.ocrConfidence.isBlank()) "-" else ui.ocrConfidence}", color = Color(0xFF9CB3FF))
+                Text("OCR rows detected: ${ui.ocrDetectedRows}", color = Color(0xFF9CB3FF))
+                if (ui.ocrWarning != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(ui.ocrWarning, color = Color(0xFFFFC987))
+                }
             }
         }
     }
