@@ -292,7 +292,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     AnalysisEngine.ocrToManualWithGuardrails(text, sourceLabel = "Image")
                 }
                 if (ocr.manualText.isBlank()) {
-                    state = state.copy(loading = false, error = "OCR did not find valid course rows")
+                    state = state.copy(
+                        loading = false,
+                        ocrPreview = ocr.preview,
+                        ocrConfidence = ocr.confidence,
+                        ocrScore = ocr.score,
+                        ocrDetectedRows = ocr.detectedRows,
+                        ocrWarning = ocr.warning,
+                        ocrBlocked = ocr.blocked,
+                        error = "OCR did not find valid course rows"
+                    )
                 } else {
                     state = state.copy(
                         loading = false,
@@ -356,7 +365,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     AnalysisEngine.ocrToManualWithGuardrails(combined.toString(), sourceLabel = "PDF")
                 }
                 if (ocr.manualText.isBlank()) {
-                    state = state.copy(loading = false, error = "PDF OCR did not find valid course rows")
+                    state = state.copy(
+                        loading = false,
+                        ocrPreview = ocr.preview,
+                        ocrConfidence = ocr.confidence,
+                        ocrScore = ocr.score,
+                        ocrDetectedRows = ocr.detectedRows,
+                        ocrWarning = ocr.warning,
+                        ocrBlocked = ocr.blocked,
+                        error = "PDF OCR did not find valid course rows"
+                    )
                 } else {
                     state = state.copy(
                         loading = false,

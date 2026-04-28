@@ -67,11 +67,13 @@ import com.nsu.transcriptmobile.data.AppMode
 import com.nsu.transcriptmobile.data.ChatMessage
 
 private enum class ScreenTab { HOME, ANALYZE, CHAT, HISTORY, PROFILE }
+private enum class AnalyzeInputMethod { MANUAL, CSV, PDF, IMAGE }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NsuMobileApp(vm: MainViewModel = viewModel()) {
     var tab by remember { mutableStateOf(ScreenTab.HOME) }
+    var analyzeInput by remember { mutableStateOf(AnalyzeInputMethod.MANUAL) }
     var ui by remember { mutableStateOf(vm.state) }
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -202,7 +204,8 @@ fun NsuMobileApp(vm: MainViewModel = viewModel()) {
 
                 ScreenTab.ANALYZE -> AnalyzeTab(
                     ui = ui,
-                    onUserId = { vm.updateUserId(it); ui = vm.state },
+                    selectedInput = analyzeInput,
+                    onSelectInput = { analyzeInput = it },
                     onProgram = { vm.updateProgram(it); ui = vm.state },
                     onText = { vm.updateManualText(it); ui = vm.state },
                     onWaived = { vm.updateWaivedText(it); ui = vm.state },
@@ -371,7 +374,8 @@ private fun HomeTab(
 @Composable
 private fun AnalyzeTab(
     ui: MainUiState,
-    onUserId: (String) -> Unit,
+    selectedInput: AnalyzeInputMethod,
+    onSelectInput: (AnalyzeInputMethod) -> Unit,
     onProgram: (String) -> Unit,
     onText: (String) -> Unit,
     onWaived: (String) -> Unit,
@@ -383,6 +387,57 @@ private fun AnalyzeTab(
     val csvPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let(onImportCsv) }
     val pdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let(onImportPdf) }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let(onImportImage) }
+    var codeDraft by remember { mutableStateOf("") }
+    var creditDraft by remember { mutableStateOf("3") }
+    var gradeDraft by remember { mutableStateOf("A") }
+    var seasonDraft by remember { mutableStateOf("Spring") }
+    var yearDraft by remember { mutableStateOf("2024") }
+    var draftError by remember { mutableStateOf<String?>(null) }
+
+    val manualLines = ui.manualText
+        .lines()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+
+    fun appendManualRow() {
+        val code = codeDraft.trim().uppercase()
+        val credits = creditDraft.trim().toIntOrNull()
+        val grade = gradeDraft.trim().uppercase()
+        val season = seasonDraft.trim().replaceFirstChar { it.uppercase() }
+        val year = yearDraft.trim()
+
+        if (!Regex("^[A-Z]{2,4}\\d{3}[A-Z]?$").matches(code)) {
+            draftError = "Course code format invalid (example: CSE115)"
+            return
+        }
+        if (credits == null || credits < 0 || credits > 6) {
+            draftError = "Credits must be between 0 and 6"
+            return
+        }
+        if (!setOf("A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "F", "W").contains(grade)) {
+            draftError = "Grade must be valid (A, A-, B+, ... W)"
+            return
+        }
+        if (!setOf("Spring", "Summer", "Fall").contains(season) || !Regex("^\\d{4}$").matches(year)) {
+            draftError = "Semester must be Spring/Summer/Fall and year like 2024"
+            return
+        }
+
+        val built = "$code, $credits, $grade, $season $year"
+        val merged = (manualLines + built).joinToString("\n")
+        onText(merged)
+        codeDraft = ""
+        creditDraft = "3"
+        gradeDraft = "A"
+        seasonDraft = "Spring"
+        yearDraft = "2024"
+        draftError = null
+    }
+
+    fun removeManualRow(index: Int) {
+        val next = manualLines.filterIndexed { i, _ -> i != index }
+        onText(next.joinToString("\n"))
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -395,68 +450,159 @@ private fun AnalyzeTab(
             val subtitle = if (ui.mode == AppMode.OFFLINE) {
                 "Offline local engine with CSV/OCR import"
             } else {
-                "Online mode uses backend /api/mobile/analyze"
+                "Online mode mirrors web backend flow"
             }
             Text(subtitle, color = Color(0xFF9CB3FF))
         }
+
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                Card(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { csvPicker.launch("text/*") },
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1A2856))
-                ) {
-                    Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.TableChart, contentDescription = null, tint = Color(0xFF7CF5E5), modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text("Import CSV", color = Color.White)
-                    }
-                }
-                Card(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { pdfPicker.launch("application/pdf") },
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1A2856))
-                ) {
-                    Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFF7CF5E5), modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text("Import PDF", color = Color.White)
-                    }
-                }
+            CardBlock {
+                Text("Program", color = Color(0xFFB9C9FF), fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(value = ui.program, onValueChange = onProgram, label = { Text("Program (CSE or BBA)") }, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = ui.waivedText,
+                    onValueChange = onWaived,
+                    label = { Text("Waived courses (comma separated)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
 
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                Card(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { imagePicker.launch("image/*") },
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1A2856))
-                ) {
-                    Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Image, contentDescription = null, tint = Color(0xFF7CF5E5), modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text("OCR Image", color = Color.White)
-                    }
-                }
-                Card(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF15224A))
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text("OCR Guardrail", color = Color(0xFF9CB3FF), fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            if (ui.ocrBlocked) "Blocked: fix rows first" else "Ready",
-                            color = if (ui.ocrBlocked) Color(0xFFFFA3B1) else Color(0xFF8EF2D9)
+            CardBlock {
+                Text("Input Method", color = Color(0xFFB9C9FF), fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    AssistChip(
+                        onClick = { onSelectInput(AnalyzeInputMethod.MANUAL) },
+                        label = { Text("Manual") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (selectedInput == AnalyzeInputMethod.MANUAL) Color(0xFF1A4A44) else Color(0xFF1A2856),
+                            labelColor = Color.White
                         )
+                    )
+                    AssistChip(
+                        onClick = { onSelectInput(AnalyzeInputMethod.CSV) },
+                        label = { Text("CSV") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (selectedInput == AnalyzeInputMethod.CSV) Color(0xFF1A4A44) else Color(0xFF1A2856),
+                            labelColor = Color.White
+                        )
+                    )
+                    AssistChip(
+                        onClick = { onSelectInput(AnalyzeInputMethod.PDF) },
+                        label = { Text("PDF") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (selectedInput == AnalyzeInputMethod.PDF) Color(0xFF1A4A44) else Color(0xFF1A2856),
+                            labelColor = Color.White
+                        )
+                    )
+                    AssistChip(
+                        onClick = { onSelectInput(AnalyzeInputMethod.IMAGE) },
+                        label = { Text("Image") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (selectedInput == AnalyzeInputMethod.IMAGE) Color(0xFF1A4A44) else Color(0xFF1A2856),
+                            labelColor = Color.White
+                        )
+                    )
+                }
+            }
+        }
+
+        if (selectedInput == AnalyzeInputMethod.CSV) {
+            item {
+                CardBlock {
+                    Text("CSV Upload", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = { csvPicker.launch("text/*") }, modifier = Modifier.fillMaxWidth()) { Text("Import CSV") }
+                }
+            }
+        }
+
+        if (selectedInput == AnalyzeInputMethod.PDF) {
+            item {
+                CardBlock {
+                    Text("PDF Upload", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = { pdfPicker.launch("application/pdf") }, modifier = Modifier.fillMaxWidth()) { Text("Import PDF") }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Best result: upload transcript pages only; clear scan recommended.", color = Color(0xFF9CB3FF))
+                }
+            }
+        }
+
+        if (selectedInput == AnalyzeInputMethod.IMAGE) {
+            item {
+                CardBlock {
+                    Text("Image Upload", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = { imagePicker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) { Text("Import Image OCR") }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Use straight, high-contrast transcript image with full table visible.", color = Color(0xFF9CB3FF))
+                }
+            }
+        }
+
+        if (selectedInput == AnalyzeInputMethod.MANUAL) {
+            item {
+                CardBlock {
+                    Text("Manual Input Builder", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(value = codeDraft, onValueChange = { codeDraft = it }, label = { Text("Course Code") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = creditDraft,
+                            onValueChange = { creditDraft = it },
+                            label = { Text("Credits") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = gradeDraft,
+                            onValueChange = { gradeDraft = it },
+                            label = { Text("Grade") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = seasonDraft,
+                            onValueChange = { seasonDraft = it },
+                            label = { Text("Season") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = yearDraft,
+                            onValueChange = { yearDraft = it },
+                            label = { Text("Year") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    draftError?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text(it, color = Color(0xFFFFA3B1))
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Button(onClick = { appendManualRow() }, modifier = Modifier.fillMaxWidth()) { Text("Add Course") }
+
+                    if (manualLines.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text("Current Rows", color = Color(0xFFB9C9FF), fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        manualLines.take(20).forEachIndexed { idx, line ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(line, color = Color(0xFFC9D7FF), modifier = Modifier.weight(1f))
+                                Button(onClick = { removeManualRow(idx) }) { Text("Remove") }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                        }
                     }
                 }
             }
@@ -491,10 +637,6 @@ private fun AnalyzeTab(
 
         item {
             CardBlock {
-                OutlinedTextField(value = ui.userId.toString(), onValueChange = onUserId, label = { Text("User ID") }, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(value = ui.program, onValueChange = onProgram, label = { Text("Program (CSE or BBA)") }, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = ui.manualText,
                     onValueChange = onText,
@@ -502,13 +644,6 @@ private fun AnalyzeTab(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(170.dp)
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = ui.waivedText,
-                    onValueChange = onWaived,
-                    label = { Text("Waived courses (comma separated)") },
-                    modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(12.dp))
                 Button(onClick = onAnalyze, modifier = Modifier.fillMaxWidth()) { Text("Run Analysis") }
